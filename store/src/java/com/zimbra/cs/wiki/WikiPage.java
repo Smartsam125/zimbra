@@ -280,7 +280,6 @@ public abstract class WikiPage {
         public String getContents(WikiPage.WikiContext ctxt) throws ServiceException {
             if (mContents != null)
                 return mContents;
-
             AuthToken auth;
             if (ctxt != null && ctxt.auth != null)
                 auth = ctxt.auth;

@@ -17,16 +17,11 @@
 package com.zimbra.cs.service.formatter;
 
 import java.awt.image.BufferedImage;
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PushbackInputStream;
-import java.io.UnsupportedEncodingException;
-import java.util.Arrays;
-import java.util.EnumSet;
-import java.util.List;
-import java.util.Set;
+import java.io.*;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.*;
 
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReader;
@@ -85,6 +80,14 @@ import com.zimbra.cs.service.mail.UploadScanner;
 import com.zimbra.cs.servlet.ETagHeaderFilter;
 import com.zimbra.cs.store.Blob;
 import com.zimbra.cs.store.StoreManager;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.util.Matrix;
+import org.apache.tika.Tika;
 
 public final class NativeFormatter extends Formatter {
 
@@ -279,7 +282,9 @@ public final class NativeFormatter extends Formatter {
                         sendbackBinaryData(context.req, context.resp, in, contentType, Part.INLINE,
                                 null /* filename */, size, true);
                     } else {
-                        sendbackOriginalDoc(in, contentType, defaultCharset, Mime.getFilename(mp), mp.getDescription(),
+                        String filename= Mime.getFilename(mp);
+                      //  filename="JonhnySins";
+                        sendbackOriginalDoc(in, contentType, defaultCharset,filename, mp.getDescription(),
                                 size, context.req, context.resp);
                     }
                 } else {
@@ -436,7 +441,8 @@ public final class NativeFormatter extends Formatter {
         }
     }
 
-    public static MimePart getMimePart(CalendarItem calItem, String part) throws IOException, MessagingException, ServiceException {
+    public static MimePart getMimePart(CalendarItem calItem, String part) throws IOException, MessagingException, ServiceException
+    {
         return Mime.getMimePart(calItem.getMimeMessage(), part);
     }
 
@@ -448,15 +454,32 @@ public final class NativeFormatter extends Formatter {
             String desc, HttpServletRequest req, HttpServletResponse resp) throws IOException {
         sendbackOriginalDoc(is, contentType, defaultCharset, filename, desc, 0, req, resp);
     }
+    private static byte[] readAllBytes(InputStream is) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        byte[] temp = new byte[4096];
+        int bytesRead;
+        while ((bytesRead = is.read(temp)) != -1) {
+            buffer.write(temp, 0, bytesRead);
+        }
+        return buffer.toByteArray();
+    }
 
     private static void sendbackOriginalDoc(InputStream is, String contentType, String defaultCharset, String filename,
             String desc, long size, HttpServletRequest req, HttpServletResponse resp) throws IOException {
+//        Tika tika = new Tika();
+//        InputStream utf8Stream = new ByteArrayInputStream(new String(readAllBytes(is), StandardCharsets.UTF_8).getBytes(StandardCharsets.UTF_8));
+//       // InputStream utf8Stream = new ByteArrayInputStream(utf8Bytes);
+//        String detectedContentType = tika.detect(utf8Stream);
+//        // Reset the stream for further processing
+//        utf8Stream.reset();
         String disp = req.getParameter(UserServlet.QP_DISP);
+        //String user = req.getParameter(UserServlet.)
         disp = (disp == null || disp.toLowerCase().startsWith("i")) ? Part.INLINE : Part.ATTACHMENT;
         if (desc != null && desc.length() <= 2048) { // do not return ridiculously long header.
             if (desc.contains(" ") && !(desc.startsWith("\"") && desc.endsWith("\""))) {
                 desc = "\"" + desc.trim() +"\"";
             }
+
             resp.addHeader("Content-Description", desc);
         }
         // defang when the html and svg attachment was requested with disposition inline
@@ -476,10 +499,81 @@ public final class NativeFormatter extends Formatter {
                 disp = Part.ATTACHMENT;
             }
             resp.setContentType(contentType);
-            sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
-        }
-    }
+           // if(disp.equals(Part.ATTACHMENT)) {
+                String extension= FilenameUtils.getExtension(filename);
+                if ("pdf".equalsIgnoreCase(extension)) {
+                    log.info("Processing PDF file...");
+                    ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
+                    try (PDDocument document = PDDocument.load(is)) {
+                        Locale locale = req.getLocale();
+                        SimpleDateFormat dateFormatter = new SimpleDateFormat("EEEE, MMMM d, yyyy 'at' h:mm a", locale);
+                        String downloadDateText =dateFormatter.format(new Date());
+                        String watermarkText = "Uganda Police";
+//                        for (PDPage page : document.getPages()) {
+//                            PDRectangle pageSize = page.getMediaBox();
+//                            float x = pageSize.getLowerLeftX() + 20;
+//                            float y = pageSize.getLowerLeftY() + 20;
+//                            try (PDPageContentStream contentStream = new PDPageContentStream(
+//                                    document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+//                                contentStream.beginText();
+//                                contentStream.setFont(PDType1Font.HELVETICA, 10);
+//                                contentStream.newLineAtOffset(x, y);
+////
+//                           contentStream.showText(downloadDateText);
+//                                contentStream.endText();
+//                            }
+//                        }
+                        for (PDPage page : document.getPages()) {
+                            PDRectangle pageSize = page.getMediaBox();
+                            float width = pageSize.getWidth();
+                            float height = pageSize.getHeight();
 
+                            try (PDPageContentStream contentStream = new PDPageContentStream(
+                                    document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+
+                                // Apply watermark text diagonally on each page
+                                contentStream.saveGraphicsState();
+                                contentStream.setFont(PDType1Font.TIMES_ROMAN, 20); // Font size
+                                contentStream.setNonStrokingColor(200, 200, 200); // Light gray
+                                contentStream.transform(Matrix.getRotateInstance(Math.toRadians(45), width / 2, height / 2));
+                                contentStream.beginText();
+                                contentStream.newLineAtOffset(-150, 0); // Adjust text position
+                                contentStream.showText(watermarkText);
+                                contentStream.endText();
+                                contentStream.restoreGraphicsState();
+                                // Apply timestamp text diagonally below the watermark on each page
+                                contentStream.saveGraphicsState();
+                                contentStream.setFont(PDType1Font.TIMES_ROMAN, 20); // Font size
+                                contentStream.setNonStrokingColor(180, 180, 180); // Lighter gray
+                                contentStream.transform(Matrix.getRotateInstance(Math.toRadians(45), width / 2, height / 2 - 100));
+                                contentStream.beginText();
+                                contentStream.newLineAtOffset(-200, 0); // Adjust text position
+                                contentStream.showText(downloadDateText);
+                                contentStream.endText();
+                                contentStream.restoreGraphicsState();
+                            }
+                        }
+                        document.save(modifiedOutput);
+                    } catch (IOException e) {
+                        log.error("Error while adding metadata to PDF", e);
+                    }
+
+                    InputStream modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
+                    sendbackBinaryData(req, resp, modifiedInputStream, contentType, disp, filename, modifiedOutput.size());
+                }else {
+                    sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
+                }
+        }
+//                else {
+//                    log.warn("The uploaded file is not a PDF: " + contentType);
+//                    sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
+//                }
+//            } else {
+//                sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
+//            }
+
+       // }
+    }
 
     @Override
     public boolean supportsSave() {
@@ -550,7 +644,6 @@ public final class NativeFormatter extends Formatter {
 
         sendZimbraHeaders(context, context.resp, item);
     }
-
     private static long getContentLength(HttpServletRequest req)
     {
         // note HttpServletRequest.getContentLength() returns int, that's
@@ -585,7 +678,6 @@ public final class NativeFormatter extends Formatter {
             } catch (ServiceException e) {
             }
         }
-
         // set Last-Modified header to date when item's content was last modified
         resp.addDateHeader("Last-Modified", item.getDate());
         // set ETag header to item's mod_content value
@@ -609,11 +701,41 @@ public final class NativeFormatter extends Formatter {
                                           String contentType, String disposition, String filename,
                                           long size, boolean ignoreContentDisposition)
     throws IOException {
+       // InputStream modifiedInputStream=null;
         resp.setContentType(contentType);
         if (disposition == null) {
             String disp = req.getParameter(UserServlet.QP_DISP);
             disposition = (disp == null || disp.toLowerCase().startsWith("i") ) ? Part.INLINE : Part.ATTACHMENT;
         }
+//        if(disposition.equals(Part.ATTACHMENT)){
+//            if(contentType.equals("application/pdf")){
+//                //implement content deposition
+//                log.info("Processing PDF file...");
+//                ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
+//                try (PDDocument document = PDDocument.load(in)) {
+//                    Locale locale = req.getLocale();
+//                    SimpleDateFormat dateFormatter = new SimpleDateFormat("EEEE, MMMM d, yyyy 'at' h:mm a", locale);
+//                    String downloadDateText = "Downloaded on: " + dateFormatter.format(new Date());
+//                    for (PDPage page : document.getPages()) {
+//                        PDRectangle pageSize = page.getMediaBox();
+//                        float x = pageSize.getLowerLeftX() + 20;
+//                        float y = pageSize.getLowerLeftY() + 20;
+//                        try (PDPageContentStream contentStream = new PDPageContentStream(
+//                                document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
+//                            contentStream.beginText();
+//                            contentStream.setFont(PDType1Font.HELVETICA, 10);
+//                            contentStream.newLineAtOffset(x, y);
+//                            contentStream.showText(downloadDateText);
+//                            contentStream.endText();
+//                        }
+//                    }
+//                    document.save(modifiedOutput);
+//                } catch (IOException e) {
+//                    log.error("Error while adding metadata to PDF", e);
+//                }
+//                modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
+//            }
+//        }
         PushbackInputStream pis = new PushbackInputStream(in, READ_AHEAD_BUFFER_SIZE);
         boolean isSafe = false;
         HttpUtil.Browser browser = HttpUtil.guessBrowser(req);
@@ -626,6 +748,7 @@ public final class NativeFormatter extends Formatter {
             }
         }
 
+     //   if(contentType.equals(""))
         if (!isSafe) {
             byte[] buf = new byte[READ_AHEAD_BUFFER_SIZE];
             int bytesRead = pis.read(buf, 0, READ_AHEAD_BUFFER_SIZE);

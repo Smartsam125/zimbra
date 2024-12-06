@@ -16,7 +16,6 @@
  */
 
 package com.zimbra.cs.index;
-
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;

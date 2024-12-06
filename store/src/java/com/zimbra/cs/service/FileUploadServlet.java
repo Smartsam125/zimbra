@@ -111,7 +111,6 @@ import com.zimbra.cs.util.Zimbra;
 
 public class FileUploadServlet extends ZimbraServlet {
     private static final long serialVersionUID = -3156986245375108467L;
-
     // bug 27610
     // We now limit file upload size for messages by zimbraMtaMaxMessageSize
     // If this query param is present in the URI, upload size is limited by zimbraFileUploadMaxSize,
@@ -328,7 +327,8 @@ public class FileUploadServlet extends ZimbraServlet {
                 mLog.warn("upload not found: " + context);
                 throw MailServiceException.NO_SUCH_UPLOAD(uploadId);
             }
-            if (!accountId.equals(up.accountId)) {
+            if (!accountId.equals(up.accountId))
+            {
                 mLog.warn("mismatched accountId for upload: " + up + "; expected: " + context);
                 throw MailServiceException.NO_SUCH_UPLOAD(uploadId);
             }

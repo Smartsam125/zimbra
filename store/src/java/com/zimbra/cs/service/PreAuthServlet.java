@@ -57,7 +57,6 @@ import com.zimbra.cs.httpclient.URLUtil;
 import com.zimbra.cs.servlet.ZimbraServlet;
 
 public class PreAuthServlet extends ZimbraServlet {
-
     public static final String PARAM_PREAUTH = "preauth";
     public static final String PARAM_AUTHTOKEN = "authtoken";
     public static final String PARAM_ACCOUNT = "account";

@@ -47,7 +47,6 @@ import com.zimbra.cs.servlet.ZimbraServlet;
 public abstract class AuthProvider {
 
     private static Log sLog = LogFactory.getLog(AuthProvider.class);
-
     // registered/installed providers
     private static Map<String, AuthProvider> registeredProviders = new HashMap<String, AuthProvider>();
 

@@ -17,9 +17,9 @@
 
 package com.zimbra.cs.service;
 
-import java.io.FilterInputStream;
-import java.io.IOException;
-import java.io.InputStream;
+import java.io.*;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -31,10 +31,13 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import org.apache.http.Header;
-import org.apache.http.HttpException;
-import org.apache.http.HttpResponse;
-import org.apache.http.HttpStatus;
+//import org.apache.hc.core5.http.io.entity.ByteArrayEntity;
+//import org.apache.hc.core5.http.message.BasicClassicHttpResponse;
+import org.apache.http.*;
+import org.apache.http.entity.ByteArrayEntity;
+import org.apache.http.message.BasicHttpResponse;
+import org.apache.http.message.BasicStatusLine;
+import org.apache.pdfbox.io.RandomAccessFile;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.config.CookieSpecs;
 import org.apache.http.client.config.RequestConfig;
@@ -110,7 +113,12 @@ import com.zimbra.soap.SoapEngine;
 import com.zimbra.soap.ZimbraSoapContext;
 import com.zimbra.soap.mail.message.DocumentActionRequest;
 import com.zimbra.soap.mail.type.DocumentActionSelector;
-
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDDocumentInformation;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+//import com.zimbra.cs.service.ContentType;
 /**
  *
  * <pre>
@@ -155,7 +163,7 @@ public class UserServlet extends ZimbraServlet {
     public static final String QP_FMT = "fmt"; // format query param
 
     public static final String QP_NOHIERARCHY = "nohierarchy"; // nohierarchy
-                                                               // query param
+    // query param
 
     public static final String QP_ZLV = "zlv"; // zip level query param
 
@@ -178,7 +186,7 @@ public class UserServlet extends ZimbraServlet {
     public static final String BODY_TEXT = "text"; // return text body
 
     public static final String BODY_HTML = "html"; // return html body if
-                                                   // possible
+    // possible
 
     public static final String QP_QUERY = "query"; // query query param
 
@@ -193,20 +201,20 @@ public class UserServlet extends ZimbraServlet {
     public static final String QP_END = "end"; // end time
 
     public static final String QP_FREEBUSY_CALENDAR = "fbcal"; // calendar
-                                                               // folder to run
-                                                               // free/busy
-                                                               // search on
+    // folder to run
+    // free/busy
+    // search on
 
     public static final String QP_IGNORE_ERROR = "ignore"; // ignore and
-                                                           // continue on error
-                                                           // during ics import
+    // continue on error
+    // during ics import
 
     public static final String QP_PRESERVE_ALARMS = "preserveAlarms"; // preserve
-                                                                      // existing
-                                                                      // alarms
-                                                                      // during
-                                                                      // ics
-                                                                      // import
+    // existing
+    // alarms
+    // during
+    // ics
+    // import
 
     public static final String QP_OFFSET = "offset"; // offset into results
 
@@ -215,23 +223,23 @@ public class UserServlet extends ZimbraServlet {
     public static final String QP_AUTH = "auth"; // auth types
 
     public static final String QP_DISP = "disp"; // disposition (a = attachment,
-                                                 // i = inline)
+    // i = inline)
 
     public static final String QP_NAME = "name"; // filename/path segments,
-                                                 // added to pathInfo
+    // added to pathInfo
 
     public static final String QP_CSVFORMAT = "csvfmt"; // csv type
-                                                        // (outlook-2003-csv,
-                                                        // yahoo-csv, ...)
+    // (outlook-2003-csv,
+    // yahoo-csv, ...)
 
     public static final String QP_CSVLOCALE = "csvlocale"; // refining locale
-                                                           // for csvfmt - e.g.
-                                                           // zh-CN
+    // for csvfmt - e.g.
+    // zh-CN
 
     public static final String QP_CSVSEPARATOR = "csvsep"; // separator
 
     public static final String QP_VERSION = "ver"; // version for WikiItem and
-                                                   // Document
+    // Document
 
     public static final String QP_HISTORY = "history"; // history for WikiItem
 
@@ -244,20 +252,20 @@ public class UserServlet extends ZimbraServlet {
     public static final String UPLOAD_NAME = "uploadName"; // upload filename
 
     public static final String UPLOAD_TYPE = "uploadType"; // upload content
-                                                           // type
+    // type
 
     public static final String QP_FBFORMAT = "fbfmt"; // free/busy format - "fb"
-                                                      // (default) or "event"
+    // (default) or "event"
 
     /**
      * Used by {@link OctopusPatchFormatter}
      */
     public static final String QP_MANIFEST = "manifest"; // selects whether
-                                                         // server returns patch
-                                                         // manifest or not
+    // server returns patch
+    // manifest or not
 
     public static final String QP_DUMPSTER = "dumpster"; // whether search in
-                                                         // dumpster
+    // dumpster
 
     /**
      * Used by {@link TarFormatter} to specify whether the <tt>.meta</tt> files
@@ -279,16 +287,16 @@ public class UserServlet extends ZimbraServlet {
     public static final String AUTH_QUERYPARAM = "qp"; // query parameter
 
     public static final String AUTH_NO_SET_COOKIE = "nsc"; // don't set auth
-                                                           // token cookie after
-                                                           // basic auth
-                                                           // same as ba after
-                                                           // bug 42782
+    // token cookie after
+    // basic auth
+    // same as ba after
+    // bug 42782
 
     public static final String AUTH_JWT = "jwt"; // auth by jwt
 
     // see https://bugzilla.zimbra.com/show_bug.cgi?id=42782#c11
     public static final String AUTH_SET_COOKIE = "sc"; // set auth token cookie
-                                                       // after basic auth
+    // after basic auth
 
     public static final String AUTH_DEFAULT = "co,jwt,nsc,qp"; // all four
 
@@ -360,9 +368,9 @@ public class UserServlet extends ZimbraServlet {
         } else if (!checkTwoFactorAuthentication(ctxt)) {
             resp.addHeader(AuthUtil.WWW_AUTHENTICATE_HEADER, getRealmHeader(req, null));
             resp.sendError(HttpServletResponse.SC_UNAUTHORIZED, L10nUtil.getMessage(MsgKey.errMustAuthenticate, req));
-         } else {
+        } else {
             resp.sendError(HttpServletResponse.SC_NOT_FOUND, message);
-         }
+        }
     }
 
     protected UserServletContext createContext(HttpServletRequest req, HttpServletResponse resp, UserServlet servlet)
@@ -410,12 +418,12 @@ public class UserServlet extends ZimbraServlet {
             }
         } catch (ServiceException se) {
             if (se.getCode() == ServiceException.PERM_DENIED ||
-                se instanceof NoSuchItemException) {
+                    se instanceof NoSuchItemException) {
                 sendError(context, req, resp, L10nUtil.getMessage(MsgKey.errNoSuchItem, req));
             } else if (se.getCode() == ServiceException.AUTH_REQUIRED) {
                 sendError(context, req, resp, L10nUtil.getMessage(MsgKey.errMustAuthenticate, req));
             } else if (se.getCode() == AccountServiceException.MAINTENANCE_MODE ||
-                       se.getCode() == AccountServiceException.ACCOUNT_INACTIVE) {
+                    se.getCode() == AccountServiceException.ACCOUNT_INACTIVE) {
                 sendError(context, req, resp, se.getMessage());
             } else {
                 throw new ServletException(se);
@@ -458,14 +466,15 @@ public class UserServlet extends ZimbraServlet {
         String id = String.valueOf(context.target.getId());
         String zscAccountId = context.getAuthAccount().getId();
 
+
         if (!context.targetAccount.getId().equals(context.getAuthAccount().getId())) {
             id = context.targetAccount.getId() + ":" + id;
             zscAccountId = context.targetAccount.getId();
         }
         try {
             ZimbraSoapContext zsc = new ZimbraSoapContext(
-                        context.opContext.getAuthToken(), zscAccountId,
-                        SoapProtocol.Soap12, SoapProtocol.Soap12, 0);
+                    context.opContext.getAuthToken(), zscAccountId,
+                    SoapProtocol.Soap12, SoapProtocol.Soap12, 0);
             soapContext.put(SoapEngine.ZIMBRA_CONTEXT, zsc);
             request = DocumentActionRequest.create(new DocumentActionSelector(id, DocumentAction.OP_VIEW));
             Element elreq = JaxbUtil.jaxbToElement(request);
@@ -510,7 +519,7 @@ public class UserServlet extends ZimbraServlet {
             // allow only admin access if the account is not active
             if (!Provisioning.ACCOUNT_STATUS_ACTIVE.equals(acctStatus)
                     && !(context.authToken != null && (context.authToken.isDelegatedAuth()
-                            || AdminAccessControl.isAdequateAdminAccount(context.getAuthAccount())))) {
+                    || AdminAccessControl.isAdequateAdminAccount(context.getAuthAccount())))) {
                 throw AccountServiceException.ACCOUNT_INACTIVE(context.targetAccount.getName());
             }
         }
@@ -521,7 +530,7 @@ public class UserServlet extends ZimbraServlet {
     private boolean checkTwoFactorAuthentication(UserServletContext context) {
         if (context != null && context.getAuthAccount() != null
                 && (context.getAuthAccount().isTwoFactorAuthEnabled()
-                        || context.getAuthAccount().isFeatureTwoFactorAuthRequired())
+                || context.getAuthAccount().isFeatureTwoFactorAuthRequired())
                 && context.basicAuthHappened && !context.cookieAuthHappened)
             return false;
         return true;
@@ -539,7 +548,7 @@ public class UserServlet extends ZimbraServlet {
     }
 
     protected boolean proxyIfRemoteTargetAccount(HttpServletRequest req, HttpServletResponse resp,
-            UserServletContext context) throws IOException, ServiceException {
+                                                 UserServletContext context) throws IOException, ServiceException {
         // this should handle both explicit /user/user-on-other-server/ and
         // /user/~/?id={account-id-on-other-server}:id
 
@@ -559,7 +568,7 @@ public class UserServlet extends ZimbraServlet {
     /**
      * Constructs the exteral url for a mount point. This gets the link back to
      * the correct server without need for proxying it
-     * 
+     *
      * @param authToken
      * @param mpt
      *            The mount point to create the url for
@@ -631,7 +640,7 @@ public class UserServlet extends ZimbraServlet {
     /**
      * Constructs the exteral url for a mount point. This gets the link back to
      * the correct server without need for proxying it
-     * 
+     *
      * @param authToken
      * @param mpt
      *            The mount point to create the url for
@@ -669,7 +678,6 @@ public class UserServlet extends ZimbraServlet {
                 reqURL.append('?').append(queryParam);
             log.debug("UserServlet: " + reqURL.toString());
         }
-
         context.opContext = new OperationContext(context.getAuthAccount(), isAdminRequest(req));
         Mailbox mbox = UserServletUtil.getTargetMailbox(context);
         if (mbox != null) {
@@ -928,7 +936,7 @@ public class UserServlet extends ZimbraServlet {
     }
 
     protected boolean proxyIfMountpoint(HttpServletRequest req, HttpServletResponse resp, UserServletContext context,
-            MailItem item) throws IOException, ServiceException, UserServletException {
+                                        MailItem item) throws IOException, ServiceException, UserServletException {
         if (!(item instanceof Mountpoint))
             return false;
         if (context.format != null && context.format.equals("html"))
@@ -1019,16 +1027,17 @@ public class UserServlet extends ZimbraServlet {
     }
 
     public static byte[] getRemoteContent(AuthToken authToken, Account target, String folder,
-            Map<String, String> params) throws ServiceException {
+                                          Map<String, String> params) throws ServiceException {
         return getRemoteContent(authToken.toZAuthToken(), getRemoteUrl(target, folder, params));
     }
 
-    public static byte[] getRemoteContent(ZAuthToken authToken, String url) throws ServiceException {
+    public static byte[] getRemoteContent(ZAuthToken authToken, String url) throws ServiceException
+    {
         return getRemoteResource(authToken, url).getSecond();
     }
 
     public static HttpInputStream getRemoteContentAsStream(AuthToken authToken, Account target, String folder,
-            Map<String, String> params) throws ServiceException, IOException {
+                                                           Map<String, String> params) throws ServiceException, IOException {
         String url = getRemoteUrl(target, folder, params);
         return getRemoteResourceAsStream(authToken.toZAuthToken(), url).getSecond();
     }
@@ -1057,33 +1066,53 @@ public class UserServlet extends ZimbraServlet {
         return url.toString();
     }
 
-    public static Pair<Header[], byte[]> getRemoteResource(ZAuthToken authToken, String url) throws ServiceException {
-        HttpResponse response = null;
-        try {
-            Pair<Header[], HttpResponse> pair = doHttpOp(authToken, new HttpGet(url));
-            response = pair.getSecond();
-            return new Pair<Header[], byte[]>(pair.getFirst(), EntityUtils.toByteArray(response.getEntity()));
-        } catch (IOException x) {
-            throw ServiceException.FAILURE("Can't read response body " + url, x);
-        } finally {
-            if (response != null) {
-                EntityUtils.consumeQuietly(response.getEntity());
-            }
+//    public static Pair<Header[], byte[]> getRemoteResource(ZAuthToken authToken, String url) throws ServiceException {
+//        HttpResponse response = null;
+//        try {
+//            Pair<Header[], HttpResponse> pair = doHttpOp(authToken, new HttpGet(url));
+//            response = pair.getSecond();
+//            return new Pair<>(pair.getFirst(), EntityUtils.toByteArray(response.getEntity()));
+//        } catch (IOException x) {
+//            throw ServiceException.FAILURE("Can't read response body " + url, x);
+//        } finally {
+//            if (response != null) {
+//                EntityUtils.consumeQuietly(response.getEntity());
+//            }
+//        }
+//    }
+public static Pair<Header[], byte[]> getRemoteResource(ZAuthToken authToken, String url) throws ServiceException {
+    HttpResponse response = null;
+    try {
+        Pair<Header[], HttpResponse> pair = doHttpOp(authToken, new HttpGet(url));
+        response = pair.getSecond();
+        // Extract the response body as a byte array
+        byte[] data = EntityUtils.toByteArray(response.getEntity());
+        // Rename the file by modifying the headers (conceptual renaming)
+        Header[] headers = pair.getFirst();
+        List<Header> updatedHeaders = new ArrayList<>(Arrays.asList(headers));
+        // Add or modify the Content-Disposition header to specify the filename
+        updatedHeaders.add(new BasicHeader("Content-Disposition", "attachment; filename=\"johnnysinns.pdf\""));
+
+        // Return the updated headers and the data
+        return new Pair<>(updatedHeaders.toArray(new Header[0]), data);
+    } catch (IOException x) {
+        throw ServiceException.FAILURE("Can't read response body " + url, x);
+    } finally {
+        if (response != null) {
+            EntityUtils.consumeQuietly(response.getEntity());
         }
     }
+}
 
     public static FileUploadServlet.Upload getRemoteResourceAsUpload(AuthToken at, ItemId iid,
-            Map<String, String> params) throws ServiceException, IOException {
+                                                                     Map<String, String> params) throws ServiceException, IOException {
         Map<String, String> pcopy = new HashMap<String, String>(params);
         pcopy.put(QP_ID, iid.toString());
-
         // fetch from remote store
         Provisioning prov = Provisioning.getInstance();
         Account target = prov.get(AccountBy.id, iid.getAccountId(), at);
         String url = getRemoteUrl(target, null, pcopy);
-
         Pair<Header[], HttpInputStream> response = getRemoteResourceAsStream(at.toZAuthToken(), url);
-
         // and save the result as an upload
         String ctype = "text/plain", filename = null;
         for (Header hdr : response.getFirst()) {
@@ -1116,7 +1145,8 @@ public class UserServlet extends ZimbraServlet {
             return -1;
         }
 
-        public String getHeader(String headerName) {
+        public String getHeader(String headerName)
+        {
             Header cl = response.getFirstHeader(headerName);
             if (cl != null)
                 return cl.getValue();
@@ -1134,7 +1164,7 @@ public class UserServlet extends ZimbraServlet {
     }
 
     public static Pair<Header[], HttpInputStream> getRemoteResourceAsStream(ZAuthToken authToken, ItemId iid,
-            String extraPath) throws ServiceException, IOException {
+                                                                            String extraPath) throws ServiceException, IOException {
         Map<String, String> params = new HashMap<String, String>();
         params.put(QP_ID, iid.toString());
         if (extraPath != null)
@@ -1150,11 +1180,137 @@ public class UserServlet extends ZimbraServlet {
         return new Pair<Integer, InputStream>(his.getContentLength(), his);
     }
 
-    public static Pair<Header[], HttpInputStream> getRemoteResourceAsStream(ZAuthToken authToken, String url)
-            throws ServiceException, IOException {
-        Pair<Header[], HttpResponse> pair = doHttpOp(authToken, new HttpGet(url));
-        return new Pair<Header[], HttpInputStream>(pair.getFirst(), new HttpInputStream(pair.getSecond()));
+//    public static Pair<Header[], HttpInputStream> getRemoteResourceAsStream(ZAuthToken authToken, String url)
+//            throws ServiceException, IOException {
+//        Pair<Header[], HttpResponse> pair = doHttpOp(authToken, new HttpGet(url));
+//        return new Pair<>(pair.getFirst(), new HttpInputStream(pair.getSecond()));
+//    }
+public static Pair<Header[], HttpInputStream> getRemoteResourceAsStream(ZAuthToken authToken, String url)
+        throws ServiceException, IOException {
+    // Fetch the response
+    Pair<Header[], HttpResponse> pair = doHttpOp(authToken, new HttpGet(url));
+    HttpResponse response = pair.getSecond();
+
+    // Always process and rename the content
+    try (HttpInputStream httpInputStream = new HttpInputStream(response);
+         ByteArrayOutputStream outputStream = new ByteArrayOutputStream()) {
+
+        // Use a buffer to copy data
+        byte[] buffer = new byte[8192]; // 8KB buffer
+        int bytesRead;
+        while ((bytesRead = httpInputStream.read(buffer)) != -1) {
+            outputStream.write(buffer, 0, bytesRead);
+        }
+
+        // Log renaming action (conceptual renaming, no actual file system action here)
+        System.out.println("Renaming the file to: johnnysinns.pdf");
+
+        // Create a new HTTP response with the modified content
+        HttpResponse modifiedResponse = createModifiedHttpResponse(outputStream.toByteArray());
+
+        return new Pair<>(pair.getFirst(), new HttpInputStream(modifiedResponse));
     }
+}
+private static void handlePdfStream(InputStream inputStream, OutputStream outputStream) throws IOException {
+        try (PDDocument document = PDDocument.load(inputStream)) {
+            // Add a custom message to the PDF (optional)
+            PDPage page = document.getPage(0);
+            try (PDPageContentStream contentStream = new PDPageContentStream(document, page,
+                    PDPageContentStream.AppendMode.APPEND, true, true)) {
+                contentStream.beginText();
+                contentStream.setFont(PDType1Font.HELVETICA_BOLD, 12);
+                contentStream.newLineAtOffset(50, 50);
+                contentStream.showText("This file was renamed to johnnysinns.pdf");
+                contentStream.endText();
+            }
+
+            // Write the modified PDF to the output stream
+            document.save(outputStream);
+        }
+    }
+    public static byte[] addDownloadDateToPdf(byte[] originalPdfBytes) {
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(originalPdfBytes);
+             PDDocument document = PDDocument.load(bais);
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+
+            // Get current date
+            String downloadDate = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+
+            // Add metadata to the PDF
+            PDDocumentInformation info = document.getDocumentInformation();
+            info.setCustomMetadataValue("DownloadDate", downloadDate);
+            document.setDocumentInformation(info);
+
+            // Save the modified PDF to a ByteArrayOutputStream
+            document.save(baos);
+
+            // Return the modified PDF bytes
+            return baos.toByteArray();
+        } catch (IOException e) {
+            // Handle any exceptions
+            e.printStackTrace();
+            return originalPdfBytes; // Return original if modification fails
+        }
+    }
+
+    private static HttpResponse createModifiedHttpResponse(byte[] data) {
+        // Modify the PDF bytes to add download date
+        byte[] modifiedPdfBytes = addDownloadDateToPdf(data);
+
+        // Define a protocol version
+        ProtocolVersion protocolVersion = new ProtocolVersion("HTTP", 1, 1);
+
+        // Create a basic HTTP response with status 200 (OK)
+        BasicHttpResponse modifiedResponse = new BasicHttpResponse(
+                new BasicStatusLine(protocolVersion, 200, "OK")
+        );
+
+        // Set the entity with the modified PDF and proper content type
+        ContentType pdf = ContentType.create("application/pdf");
+        ByteArrayEntity entity = new ByteArrayEntity(modifiedPdfBytes, pdf);
+        modifiedResponse.setEntity(entity);
+
+        // Add the Content-Disposition header to specify the filename
+        modifiedResponse.addHeader("Content-Disposition", "attachment; filename=\"johnnysins.pdf\"");
+
+        return modifiedResponse;
+    }
+//    private static HttpResponse createModifiedHttpResponse(byte[] data) {
+//        // Define a protocol version
+//        ProtocolVersion protocolVersion = new ProtocolVersion("HTTP", 1, 1);
+//
+//        // Create a basic HTTP response with status 200 (OK)
+//        BasicHttpResponse modifiedResponse = new BasicHttpResponse(
+//                new BasicStatusLine(protocolVersion, 200, "OK")
+//        );
+//
+//        // Set the entity with the modified PDF and proper content type
+//        ContentType pdf = ContentType.create("application/pdf");
+//        ByteArrayEntity entity = new ByteArrayEntity(data, pdf);
+//        modifiedResponse.setEntity(entity);
+//
+//        // Add the Content-Disposition header to specify the filename
+//        modifiedResponse.addHeader("Content-Disposition", "attachment; filename=\"johnnysins.pdf\"");
+//
+//        return modifiedResponse;
+//    }
+
+
+//    private static HttpResponse createModifiedHttpResponse(byte[] data) {
+//        // Define a protocol version
+//        ProtocolVersion protocolVersion = new ProtocolVersion("HTTP", 1, 1);
+//
+//        // Create a basic HTTP response with status 200 (OK)
+//        BasicHttpResponse modifiedResponse = new BasicHttpResponse(
+//                new BasicStatusLine(protocolVersion, 200, "OK")
+//        );
+//
+//        // Set the entity with the modified PDF and proper content type
+//        ContentType pdf= ContentType.create("application/pdf");
+//        ByteArrayEntity entity = new ByteArrayEntity(data,pdf);
+//        modifiedResponse.setEntity(entity);
+//        return modifiedResponse;
+//    }
 
     public static Pair<Header[], HttpInputStream> putMailItem(ZAuthToken authToken, String url, MailItem item)
             throws ServiceException, IOException {
@@ -1181,12 +1337,12 @@ public class UserServlet extends ZimbraServlet {
     }
 
     public static Pair<Header[], HttpInputStream> putRemoteResource(AuthToken authToken, String url, InputStream req,
-            Header[] headers) throws ServiceException, IOException {
+                                                                    Header[] headers) throws ServiceException, IOException {
         return putRemoteResource(authToken.toZAuthToken(), url, req, headers);
     }
 
     public static Pair<Header[], HttpInputStream> putRemoteResource(ZAuthToken authToken, String url, InputStream req,
-            Header[] headers) throws ServiceException, IOException {
+                                                                    Header[] headers) throws ServiceException, IOException {
         StringBuilder u = new StringBuilder(url);
         u.append("?").append(QP_AUTH).append('=').append(AUTH_COOKIE);
         HttpPut method = new HttpPut(u.toString());
@@ -1240,8 +1396,8 @@ public class UserServlet extends ZimbraServlet {
             long contentLength = ((HttpPut) method).getEntity().getContentLength();
             if (contentLength > 0) {
                 int timeEstimate = Math.max(10000, (int) (contentLength / 100)); // 100kbps
-                                                                                 // in
-                                                                                 // millis
+                // in
+                // millis
                 // cannot set connection time using our
                 // ZimbrahttpConnectionManager,
                 // see comments in ZimbrahttpConnectionManager.
