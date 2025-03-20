@@ -18,8 +18,11 @@ package com.zimbra.cs.service.formatter;
 
 import java.awt.image.BufferedImage;
 import java.io.*;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.text.SimpleDateFormat;
 import java.util.*;
 
@@ -41,6 +44,7 @@ import javax.servlet.http.HttpServletResponse;
 import com.google.common.base.Charsets;
 import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableSet;
+import com.zimbra.client.ZMailbox;
 import com.zimbra.common.localconfig.LC;
 import com.zimbra.common.mime.MimeConstants;
 import com.zimbra.common.mime.MimeDetect;
@@ -81,13 +85,35 @@ import com.zimbra.cs.servlet.ETagHeaderFilter;
 import com.zimbra.cs.store.Blob;
 import com.zimbra.cs.store.StoreManager;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.http.HttpEntity;
+import org.apache.http.client.HttpClient;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpPost;
+import org.apache.http.entity.mime.MultipartEntityBuilder;
+import org.apache.http.entity.mime.content.InputStreamBody;
+import org.apache.http.impl.client.HttpClients;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.encryption.AccessPermission;
+import org.apache.pdfbox.pdmodel.encryption.StandardProtectionPolicy;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.pdmodel.graphics.state.PDExtendedGraphicsState;
 import org.apache.pdfbox.util.Matrix;
+import org.apache.poi.ooxml.POIXMLProperties;
+import org.apache.poi.openxml4j.exceptions.InvalidFormatException;
+import org.apache.poi.util.Units;
+import org.apache.poi.xssf.usermodel.*;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
+import org.apache.poi.xwpf.usermodel.XWPFParagraph;
+import org.apache.poi.xwpf.usermodel.XWPFPictureData;
+import org.apache.http.entity.AbstractHttpEntity;
+import org.apache.poi.xwpf.usermodel.XWPFRun;
 import org.apache.tika.Tika;
+import org.json.JSONObject;
+import org.openxmlformats.schemas.wordprocessingml.x2006.main.CTBackground;
 
 public final class NativeFormatter extends Formatter {
 
@@ -100,6 +126,8 @@ public final class NativeFormatter extends Formatter {
     public static final String ATTR_CONTENTLENGTH = "contentlength";
     public static final String ATTR_LOCALE  = "locale";
     public static final String RETURN_CODE_NO_RESIZE = "NO_RESIZE";
+    private ZMailbox mMailbox;
+
 
     private static final Log log = LogFactory.getLog(NativeFormatter.class);
 
@@ -283,9 +311,11 @@ public final class NativeFormatter extends Formatter {
                                 null /* filename */, size, true);
                     } else {
                         String filename= Mime.getFilename(mp);
+                        String sender = item.getSender();
+                      //  int attachmentId = item.getId();
                       //  filename="JonhnySins";
                         sendbackOriginalDoc(in, contentType, defaultCharset,filename, mp.getDescription(),
-                                size, context.req, context.resp);
+                                size, context.req, context.resp,context,sender,item.getId());
                     }
                 } else {
                     in = mp.getInputStream();
@@ -412,13 +442,14 @@ public final class NativeFormatter extends Formatter {
         } else {
             String defaultCharset = context.targetAccount.getAttr(Provisioning.A_zimbraPrefMailDefaultCharset, null);
             boolean neuter = doc.getAccount().getBooleanAttr(Provisioning.A_zimbraNotebookSanitizeHtml, true);
+            String sender = doc.getSender();
+
             if (neuter)
-                sendbackOriginalDoc(is, contentType, defaultCharset, doc.getName(), null, doc.getSize(), context.req, context.resp);
+                sendbackOriginalDoc(is, contentType, defaultCharset, doc.getName(), null, doc.getSize(), context.req, context.resp,context,sender,doc.getId());
             else
                 sendbackBinaryData(context.req, context.resp, is, contentType, null , doc.getName(), doc.getSize());
         }
     }
-
     private void handleConversion(UserServletContext ctxt, InputStream is, String filename, String ct, String digest, long length) throws IOException, ServletException {
         try {
             ctxt.req.setAttribute(ATTR_INPUTSTREAM, is);
@@ -449,29 +480,76 @@ public final class NativeFormatter extends Formatter {
     public static MimePart getMimePart(Message msg, String part) throws IOException, MessagingException, ServiceException {
         return Mime.getMimePart(msg.getMimeMessage(), part);
     }
+//    public static void sendbackOriginalDoc(InputStream is, String contentType, String defaultCharset, String filename,
+//            String desc, HttpServletRequest req, HttpServletResponse resp,UserServletContext context) throws IOException {
+//        sendbackOriginalDoc(is, contentType, defaultCharset, filename, desc, 0, req, resp,context);
+//    }
+    private static void addMetadataToExcel(InputStream inputStream, OutputStream outputStream, String userName, String clientIP, String Guid) {
+        try (XSSFWorkbook workbook = new XSSFWorkbook(inputStream)) {
+            // Add custom metadata
+            POIXMLProperties properties = workbook.getProperties();
+            POIXMLProperties.CustomProperties customProperties = properties.getCustomProperties();
 
-    public static void sendbackOriginalDoc(InputStream is, String contentType, String defaultCharset, String filename,
-            String desc, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-        sendbackOriginalDoc(is, contentType, defaultCharset, filename, desc, 0, req, resp);
-    }
-    private static byte[] readAllBytes(InputStream is) throws IOException {
-        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-        byte[] temp = new byte[4096];
-        int bytesRead;
-        while ((bytesRead = is.read(temp)) != -1) {
-            buffer.write(temp, 0, bytesRead);
+            customProperties.addProperty("AuthorName", userName);
+
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+            String currentDate = sdf.format(new Date());
+            customProperties.addProperty("DateAdded", currentDate);
+            customProperties.addProperty("ClientIP", clientIP);
+            customProperties.addProperty("DocumentId", Guid);
+
+            workbook.write(outputStream);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to add metadata to Excel file.", e);
         }
-        return buffer.toByteArray();
+    }
+    private static void lockDocument(PDDocument document, String ownerPassword) throws IOException {
+        AccessPermission accessPermission = new AccessPermission();
+        accessPermission.setCanModify(false);
+        accessPermission.setCanFillInForm(false);
+        accessPermission.setCanExtractContent(false);
+        StandardProtectionPolicy protectionPolicy = new StandardProtectionPolicy(ownerPassword, null, accessPermission);
+        protectionPolicy.setEncryptionKeyLength(128);
+        protectionPolicy.setPermissions(accessPermission);
+        document.protect(protectionPolicy);
+    }
+    private String getFileExtension(String filePath) {
+        return filePath.substring(filePath.lastIndexOf(".") + 1);
+    }
+    private void writeFormData(DataOutputStream outputStream, String boundary, String filePath) throws IOException {
+        // Write the data field for the file
+        String fileName = new File(filePath).getName();
+        outputStream.writeBytes("--" + boundary + "\r\n");
+        outputStream.writeBytes("Content-Disposition: form-data; name=\"data\"; filename=\"" + fileName + "\"\r\n");
+        outputStream.writeBytes("Content-Type: " + "application/vnd.openxmlformats-officedocument.wordprocessingml.document" + "\r\n");
+        outputStream.writeBytes("\r\n");
+
+        // Write the actual file content
+        try (FileInputStream fileInputStream = new FileInputStream(filePath)) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = fileInputStream.read(buffer)) != -1) {
+                outputStream.write(buffer, 0, bytesRead);
+            }
+        }
+
+        outputStream.writeBytes("\r\n");
+    }
+    private void saveConvertedFile(InputStream is) throws IOException {
+        // Define the path where the converted PDF will be saved
+        String outputFilePath = "converted_file.pdf";
+        try (FileOutputStream fileOutputStream = new FileOutputStream(outputFilePath)) {
+            byte[] buffer = new byte[4096];
+            int bytesRead;
+            while ((bytesRead = is.read(buffer)) != -1) {
+                fileOutputStream.write(buffer, 0, bytesRead);
+            }
+            System.out.println("Converted PDF saved to: " + outputFilePath);
+        }
     }
 
     private static void sendbackOriginalDoc(InputStream is, String contentType, String defaultCharset, String filename,
-            String desc, long size, HttpServletRequest req, HttpServletResponse resp) throws IOException {
-//        Tika tika = new Tika();
-//        InputStream utf8Stream = new ByteArrayInputStream(new String(readAllBytes(is), StandardCharsets.UTF_8).getBytes(StandardCharsets.UTF_8));
-//       // InputStream utf8Stream = new ByteArrayInputStream(utf8Bytes);
-//        String detectedContentType = tika.detect(utf8Stream);
-//        // Reset the stream for further processing
-//        utf8Stream.reset();
+            String desc, long size, HttpServletRequest req, HttpServletResponse resp,UserServletContext context,String sender,int docId) throws IOException {
         String disp = req.getParameter(UserServlet.QP_DISP);
         //String user = req.getParameter(UserServlet.)
         disp = (disp == null || disp.toLowerCase().startsWith("i")) ? Part.INLINE : Part.ATTACHMENT;
@@ -479,7 +557,6 @@ public final class NativeFormatter extends Formatter {
             if (desc.contains(" ") && !(desc.startsWith("\"") && desc.endsWith("\""))) {
                 desc = "\"" + desc.trim() +"\"";
             }
-
             resp.addHeader("Content-Description", desc);
         }
         // defang when the html and svg attachment was requested with disposition inline
@@ -494,85 +571,165 @@ public final class NativeFormatter extends Formatter {
             }
             resp.getWriter().write(content);
         } else {
-            // flash attachment may contain a malicious script hence..
             if (contentType.startsWith(MimeConstants.CT_APPLICATION_SHOCKWAVE_FLASH)) {
                 disp = Part.ATTACHMENT;
             }
             resp.setContentType(contentType);
-           // if(disp.equals(Part.ATTACHMENT)) {
-                String extension= FilenameUtils.getExtension(filename);
-                if ("pdf".equalsIgnoreCase(extension)) {
-                    log.info("Processing PDF file...");
-                    ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
-                    try (PDDocument document = PDDocument.load(is)) {
-                        Locale locale = req.getLocale();
-                        SimpleDateFormat dateFormatter = new SimpleDateFormat("EEEE, MMMM d, yyyy 'at' h:mm a", locale);
-                        String downloadDateText =dateFormatter.format(new Date());
-                        String watermarkText = "Uganda Police";
-//                        for (PDPage page : document.getPages()) {
-//                            PDRectangle pageSize = page.getMediaBox();
-//                            float x = pageSize.getLowerLeftX() + 20;
-//                            float y = pageSize.getLowerLeftY() + 20;
-//                            try (PDPageContentStream contentStream = new PDPageContentStream(
-//                                    document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
-//                                contentStream.beginText();
-//                                contentStream.setFont(PDType1Font.HELVETICA, 10);
-//                                contentStream.newLineAtOffset(x, y);
-////
-//                           contentStream.showText(downloadDateText);
-//                                contentStream.endText();
-//                            }
-//                        }
-                        for (PDPage page : document.getPages()) {
-                            PDRectangle pageSize = page.getMediaBox();
-                            float width = pageSize.getWidth();
-                            float height = pageSize.getHeight();
-
-                            try (PDPageContentStream contentStream = new PDPageContentStream(
-                                    document, page, PDPageContentStream.AppendMode.APPEND, true, true)) {
-
-                                // Apply watermark text diagonally on each page
-                                contentStream.saveGraphicsState();
-                                contentStream.setFont(PDType1Font.TIMES_ROMAN, 20); // Font size
-                                contentStream.setNonStrokingColor(200, 200, 200); // Light gray
-                                contentStream.transform(Matrix.getRotateInstance(Math.toRadians(45), width / 2, height / 2));
-                                contentStream.beginText();
-                                contentStream.newLineAtOffset(-150, 0); // Adjust text position
-                                contentStream.showText(watermarkText);
-                                contentStream.endText();
-                                contentStream.restoreGraphicsState();
-                                // Apply timestamp text diagonally below the watermark on each page
-                                contentStream.saveGraphicsState();
-                                contentStream.setFont(PDType1Font.TIMES_ROMAN, 20); // Font size
-                                contentStream.setNonStrokingColor(180, 180, 180); // Lighter gray
-                                contentStream.transform(Matrix.getRotateInstance(Math.toRadians(45), width / 2, height / 2 - 100));
-                                contentStream.beginText();
-                                contentStream.newLineAtOffset(-200, 0); // Adjust text position
-                                contentStream.showText(downloadDateText);
-                                contentStream.endText();
-                                contentStream.restoreGraphicsState();
-                            }
-                        }
-                        document.save(modifiedOutput);
-                    } catch (IOException e) {
-                        log.error("Error while adding metadata to PDF", e);
-                    }
-
-                    InputStream modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
-                    sendbackBinaryData(req, resp, modifiedInputStream, contentType, disp, filename, modifiedOutput.size());
-                }else {
-                    sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
+            String extension= FilenameUtils.getExtension(filename);
+            String clientName = context.getAuthAccount() == null ? null : context.getAuthAccount().getName();
+             //String userAuthToken= req.getParameter(UserServlet.AUTH_JWT);
+            String clientIp = IpAddressUtil.getClientIp(req);
+            String userName=clientName+"-"+clientIp;
+           // String username=clientName;
+            //CallbackService.sendCallback(docId, filename, userName, clientIp, endpoint);
+            //send a call back to  a post request containing the docId, filename, user, clientIp
+            String endpoint="https://play.gdexperts.com:9003/api/downloads/callback";
+            String documentId=UUID.randomUUID().toString();
+            try {
+                // Format download date
+                log.info("Sending callback to: " + endpoint);
+                SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ");
+                String downloadDate = sdf.format(new Date());
+                // Create JSON payload
+                JSONObject payload = new JSONObject();
+                payload.put("email", userName);
+                payload.put("document_name", filename);
+                payload.put("ip_address", clientIp);
+                payload.put("download_date", downloadDate);
+                payload.put("doc_id", documentId);
+                payload.put("sender", sender);
+                payload.put("attachment_id", docId);
+                URL url = new URL(endpoint);
+                HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("POST");
+                connection.setRequestProperty("Content-Type", "application/json");
+                connection.setDoOutput(true);
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(10000);
+                try (OutputStream os = connection.getOutputStream()) {
+                    os.write(payload.toString().getBytes());
+                    os.flush();
                 }
-        }
-//                else {
-//                    log.warn("The uploaded file is not a PDF: " + contentType);
-//                    sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
-//                }
-//            } else {
-//                sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
-//            }
 
-       // }
+                // Get response code (optional)
+                int responseCode = connection.getResponseCode();
+                log.info("Callback response code: " + responseCode);
+
+                connection.disconnect();
+            } catch (Exception e)
+            {
+                e.printStackTrace();
+                log.info("Error sending HTTP request: " + e);
+            }
+            if ("pdf".equalsIgnoreCase(extension) )
+            {
+                PDDocument document = null;
+                try {
+                        document = PDDocument.load(is);
+                    if (document != null) {
+                        log.info("Processing PDF file...");
+                        ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
+                        // Add watermark and lock the document
+                        Locale locale = req.getLocale();
+                        String imagePath = "/opt/zimbra/jetty_base/webapps/zimbraAdmin/img/logo/ugandapolice.png";
+                        String outputPath = "output.pdf";
+                        PDFWatermarkUtility.addWatermark(document, userName, locale, imagePath, outputPath,documentId);
+                       // lockDocument(document, "DickHeadXXX");
+                        document.save(modifiedOutput);
+                        InputStream modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
+                        sendbackBinaryData(req, resp, modifiedInputStream, contentType, disp, filename, modifiedOutput.size());
+                    }
+                } catch (Exception e)
+                {
+                    log.error("Error processing document", e);
+                    resp.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Document processing failed.");
+                } finally {
+                    if (document != null) {
+                        try {
+                            document.close();
+                        } catch (IOException e) {
+                            log.warn("Failed to close document", e);
+                        }
+                    }
+                }
+            }
+          else if ("docx".equalsIgnoreCase(extension)) {
+                PDDocument document;
+                log.info("Converting DOCX to PDF...");
+                HttpClient client = HttpClients.createDefault();
+                HttpPost postRequest = new HttpPost("http://localhost:8082/lool/convert-to?format=pdf");
+                MultipartEntityBuilder entityBuilder = MultipartEntityBuilder.create();
+                entityBuilder.addPart("data", new InputStreamBody(is,"application/octet-stream",filename));
+                HttpEntity entity = entityBuilder.build();
+                postRequest.setHeader("accept", "application/octet-stream");
+                postRequest.setEntity(entity);
+                CloseableHttpResponse response = (CloseableHttpResponse) client.execute(postRequest);
+                InputStream pdfInputStream = null;
+                if(response.getStatusLine().getStatusCode() == 200)
+                {
+                    pdfInputStream = response.getEntity().getContent();
+
+                }
+                if(pdfInputStream!=null)
+                {
+                   log.info("Processing PDF file after conversion...");
+                    document = PDDocument.load(pdfInputStream);
+                    ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
+                    // Add watermark and lock the document
+                    Locale locale = req.getLocale();
+                    String imagePath = "/opt/zimbra/jetty_base/webapps/zimbraAdmin/img/logo/ugandapolice.png";
+                    String outputPath = "output.pdf";
+                    PDFWatermarkUtility.addWatermark(document, userName, locale, imagePath, outputPath,documentId);
+                   // lockDocument(document, "DickHeadXXX");
+                    document.save(modifiedOutput);
+                    InputStream modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
+                    sendbackBinaryData(req, resp, modifiedInputStream,"application/pdf",disp,filename,modifiedOutput.size());
+                }
+            }
+            else if ("xlsx".equalsIgnoreCase(extension)) {
+                log.info("Processing Excel document...");
+                ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
+                try {
+                    String watermarkText = userName;
+                    addMetadataToExcel(is, modifiedOutput, watermarkText,clientIp,documentId);
+                } catch (Exception e) {
+                    log.error("Error while adding metadata to Excel", e);
+                    throw new RuntimeException("Failed to process Excel document.", e);
+                }
+                InputStream modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
+                sendbackBinaryData(req, resp, modifiedInputStream, contentType, disp, filename, modifiedOutput.size());
+            }
+            else if ("csv".equalsIgnoreCase(extension)) {
+                log.info("Processing CSV file...");
+                ByteArrayOutputStream modifiedOutput = new ByteArrayOutputStream();
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(is));
+                     PrintWriter writer = new PrintWriter(new OutputStreamWriter(modifiedOutput))) {
+                    Locale locale = req.getLocale();
+                    SimpleDateFormat dateFormatter = new SimpleDateFormat("EEEE, MMMM d, yyyy 'at' h:mm a", locale);
+                    String downloadDateText = dateFormatter.format(new Date());
+                    String watermarkText = userName;
+                    // Append metadata as comments at the start of the CSV file
+                    writer.println("# User: " + watermarkText);
+                    writer.println("# Downloaded: " + downloadDateText);
+
+                    // Write original content
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        writer.println(line);
+                    }
+                } catch (IOException e) {
+                    log.error("Error while adding metadata to CSV", e);
+                    throw new RuntimeException("Failed to process CSV file.", e);
+                }
+
+                InputStream modifiedInputStream = new ByteArrayInputStream(modifiedOutput.toByteArray());
+                sendbackBinaryData(req, resp, modifiedInputStream, contentType, disp, filename, modifiedOutput.size());
+            }
+            else {
+                sendbackBinaryData(req, resp, is, contentType, disp, filename, size);
+            }
+
+        }
     }
 
     @Override
@@ -747,8 +904,6 @@ public final class NativeFormatter extends Formatter {
                 resp.addHeader("X-Download-Options", "noopen"); // ask it to save the file
             }
         }
-
-     //   if(contentType.equals(""))
         if (!isSafe) {
             byte[] buf = new byte[READ_AHEAD_BUFFER_SIZE];
             int bytesRead = pis.read(buf, 0, READ_AHEAD_BUFFER_SIZE);
